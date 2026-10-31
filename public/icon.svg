@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#8b5cf6" />
+    </linearGradient>
+    <linearGradient id="innerGlow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.0" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#312e81" flood-opacity="0.5" />
+    </filter>
+  </defs>
+
+  <!-- Background rounded squircle -->
+  <rect x="24" y="24" width="464" height="464" rx="116" fill="url(#bgGrad)" filter="url(#shadow)" />
+  <rect x="24" y="24" width="464" height="464" rx="116" fill="url(#innerGlow)" />
+  <rect x="24" y="24" width="464" height="464" rx="116" stroke="#ffffff" stroke-opacity="0.2" stroke-width="2" />
+
+  <!-- Dynamic Play + Down Arrow Symbol -->
+  <g transform="translate(136, 126)">
+    <!-- Downward Arrow Stem -->
+    <path d="M120 20 L120 160" stroke="#ffffff" stroke-width="28" stroke-linecap="round" />
+    <!-- Downward Arrow Head -->
+    <path d="M60 110 L120 170 L180 110" stroke="#ffffff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" />
+    <!-- Media Tray Base / Curved Arc -->
+    <path d="M40 190 C40 230, 200 230, 200 190" stroke="#ffffff" stroke-width="24" stroke-linecap="round" fill="none" opacity="0.9" />
+    <!-- Accent Sparkle / Ring Dot -->
+    <circle cx="195" cy="45" r="14" fill="#a5b4fc" />
+  </g>
+</svg>
