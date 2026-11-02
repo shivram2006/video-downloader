@@ -4,14 +4,17 @@
   "description": "Premium Universal Video Downloader & Audio Converter PWA",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/postinstall.js",
     "dev:server": "node server/index.js",
     "dev:client": "vite",
     "dev": "concurrently -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"npm run dev:server\" \"npm run dev:client\"",
-    "build": "vite build",
+    "build": "node scripts/postinstall.js && vite build",
     "preview": "vite preview",
     "start": "node server/index.js"
   },
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

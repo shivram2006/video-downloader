@@ -1,11 +1,16 @@
-import { spawn, execFile } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import https from 'https';
+import http from 'http';
 import { fileURLToPath } from 'url';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const rootDir = path.join(__dirname, '..');
+const binDir = path.join(rootDir, 'bin');
 
 // Project temp directory for in-flight media processing
 const TEMP_DIR = path.join(os.tmpdir(), 'omnivid_downloads');
@@ -19,8 +24,122 @@ const activeJobs = new Map();
 // Standard modern browser User-Agent
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-// Find ffmpeg location
-function findFfmpegDir() {
+// Cache resolved runner
+let cachedRunner = null;
+
+// Download helper that follows redirects
+function downloadFile(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(destPath);
+    function get(currentUrl) {
+      const client = currentUrl.startsWith('https') ? https : http;
+      client.get(currentUrl, (response) => {
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          return get(response.headers.location);
+        }
+        if (response.statusCode !== 200) {
+          file.close();
+          fs.unlink(destPath, () => {});
+          return reject(new Error(`Failed to download binary: Status Code ${response.statusCode}`));
+        }
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close(() => resolve(destPath));
+        });
+      }).on('error', (err) => {
+        file.close();
+        fs.unlink(destPath, () => {});
+        reject(err);
+      });
+    }
+    get(url);
+  });
+}
+
+/**
+ * Dynamically resolves the best way to execute yt-dlp on this machine
+ */
+async function getExecutableRunner() {
+  if (cachedRunner) return cachedRunner;
+
+  const isWindows = process.platform === 'win32';
+  const binName = isWindows ? 'yt-dlp.exe' : 'yt-dlp';
+  const localBin = path.join(binDir, binName);
+
+  // 1. Check local project bin/ directory
+  if (fs.existsSync(localBin)) {
+    try {
+      if (!isWindows) {
+        fs.chmodSync(localBin, 0o755);
+      }
+      cachedRunner = { command: localBin, baseArgs: [] };
+      console.log(`[Media Engine] Using local standalone binary: ${localBin}`);
+      return cachedRunner;
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // 2. Check if yt-dlp executable is globally in PATH
+  try {
+    execSync(`${isWindows ? 'where' : 'which'} yt-dlp`, { stdio: 'ignore' });
+    cachedRunner = { command: 'yt-dlp', baseArgs: [] };
+    console.log('[Media Engine] Using global yt-dlp from PATH');
+    return cachedRunner;
+  } catch (e) {}
+
+  // 3. Check if python3 has yt_dlp module
+  try {
+    execSync('python3 -c "import yt_dlp"', { stdio: 'ignore' });
+    cachedRunner = { command: 'python3', baseArgs: ['-m', 'yt_dlp'] };
+    console.log('[Media Engine] Using python3 -m yt_dlp');
+    return cachedRunner;
+  } catch (e) {}
+
+  // 4. Check if python has yt_dlp module
+  try {
+    execSync('python -c "import yt_dlp"', { stdio: 'ignore' });
+    cachedRunner = { command: 'python', baseArgs: ['-m', 'yt_dlp'] };
+    console.log('[Media Engine] Using python -m yt_dlp');
+    return cachedRunner;
+  } catch (e) {}
+
+  // 5. On-the-fly download fallback: Download standalone binary if missing
+  console.log('[Media Engine] Standalone binary not found. Downloading on the fly...');
+  try {
+    if (!fs.existsSync(binDir)) {
+      fs.mkdirSync(binDir, { recursive: true });
+    }
+    const downloadUrl = isWindows
+      ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
+      : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
+
+    await downloadFile(downloadUrl, localBin);
+    if (!isWindows) {
+      fs.chmodSync(localBin, 0o755);
+    }
+    cachedRunner = { command: localBin, baseArgs: [] };
+    console.log(`[Media Engine] On-the-fly download succeeded: ${localBin}`);
+    return cachedRunner;
+  } catch (err) {
+    console.warn(`[Media Engine] On-the-fly download failed: ${err.message}`);
+  }
+
+  // 6. Last resort fallback
+  cachedRunner = { command: 'python3', baseArgs: ['-m', 'yt_dlp'] };
+  return cachedRunner;
+}
+
+/**
+ * Resolves FFmpeg binary path for audio extraction & muxing
+ */
+function getFfmpegLocation() {
+  // 1. Bundled @ffmpeg-installer/ffmpeg
+  if (ffmpegInstaller && ffmpegInstaller.path && fs.existsSync(ffmpegInstaller.path)) {
+    return ffmpegInstaller.path;
+  }
+
+  // 2. Windows WinGet paths
   const wingetBase = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages');
   if (fs.existsSync(wingetBase)) {
     try {
@@ -37,26 +156,38 @@ function findFfmpegDir() {
           }
         }
       }
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) {}
   }
+
+  // 3. System ffmpeg in PATH
+  try {
+    execSync(`${process.platform === 'win32' ? 'where' : 'which'} ffmpeg`, { stdio: 'ignore' });
+    return 'ffmpeg';
+  } catch (e) {}
+
   return null;
 }
 
-const FFMPEG_DIR = findFfmpegDir();
+const FFMPEG_LOCATION = getFfmpegLocation();
 
-// Helper to run python yt-dlp with user agent & ffmpeg
-function getYtDlpArgs(extraArgs = []) {
+// Assemble arguments with runner, user agent, certificates, and ffmpeg
+async function buildYtDlpSpawnConfig(extraArgs = []) {
+  const runner = await getExecutableRunner();
   const args = [
-    '-m', 'yt_dlp',
+    ...runner.baseArgs,
     '--user-agent', USER_AGENT,
-    ...extraArgs,
+    '--no-check-certificates',
   ];
-  if (FFMPEG_DIR) {
-    args.push('--ffmpeg-location', FFMPEG_DIR);
+
+  if (FFMPEG_LOCATION) {
+    args.push('--ffmpeg-location', FFMPEG_LOCATION);
   }
-  return args;
+
+  args.push(...extraArgs);
+  return {
+    command: runner.command,
+    args,
+  };
 }
 
 // Format duration into hh:mm:ss or mm:ss
@@ -127,6 +258,11 @@ export function validateUrl(urlStr) {
       return { valid: false, error: 'Access to private or local network resources is forbidden.' };
     }
 
+    // Clean tracking query parameters for social media reels / posts (e.g. Instagram ?utm_source=...)
+    if (hostname.includes('instagram.com') || hostname.includes('twitter.com') || hostname.includes('x.com')) {
+      parsed.search = '';
+    }
+
     return { valid: true, url: parsed.href };
   } catch (err) {
     return { valid: false, error: 'Invalid URL format. Please provide a full link (e.g. https://...)' };
@@ -137,16 +273,16 @@ export function validateUrl(urlStr) {
  * Inspect video URL and extract verified available formats
  */
 export async function getVideoInfo(videoUrl) {
-  return new Promise((resolve, reject) => {
-    const args = getYtDlpArgs([
-      '--dump-single-json',
-      '--no-warnings',
-      '--no-playlist',
-      '--skip-download',
-      videoUrl,
-    ]);
+  const spawnConfig = await buildYtDlpSpawnConfig([
+    '--dump-single-json',
+    '--no-warnings',
+    '--no-playlist',
+    '--skip-download',
+    videoUrl,
+  ]);
 
-    const proc = spawn('python', args, {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(spawnConfig.command, spawnConfig.args, {
       windowsHide: true,
       maxBuffer: 50 * 1024 * 1024,
     });
@@ -343,7 +479,7 @@ async function processRawMetadata(data, originalUrl) {
 /**
  * Start a download job with real-time progress callbacks
  */
-export function startDownloadJob({ url, type, formatId, height, audioFormat, customFilename }) {
+export async function startDownloadJob({ url, type, formatId, height, audioFormat, customFilename }) {
   const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   const outputTemplate = path.join(TEMP_DIR, `${jobId}.%(ext)s`);
 
@@ -394,8 +530,8 @@ export function startDownloadJob({ url, type, formatId, height, audioFormat, cus
 
   extraArgs.push(url);
 
-  const args = getYtDlpArgs(extraArgs);
-  const proc = spawn('python', args, {
+  const spawnConfig = await buildYtDlpSpawnConfig(extraArgs);
+  const proc = spawn(spawnConfig.command, spawnConfig.args, {
     windowsHide: true,
   });
 

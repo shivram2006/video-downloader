@@ -58,7 +58,7 @@ app.post('/api/info', async (req, res) => {
 });
 
 // Start a media download or audio extraction job
-app.post('/api/download', (req, res) => {
+app.post('/api/download', async (req, res) => {
   const { url, type, formatId, height, audioFormat, title } = req.body;
 
   if (!url || typeof url !== 'string') {
@@ -71,7 +71,7 @@ app.post('/api/download', (req, res) => {
   }
 
   try {
-    const jobId = startDownloadJob({
+    const jobId = await startDownloadJob({
       url: validation.url,
       type: type === 'audio' ? 'audio' : 'video',
       formatId,

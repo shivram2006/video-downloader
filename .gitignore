@@ -44,3 +44,7 @@ temp_downloads/
 *.m4a
 *.part
 *.ytdl
+
+# Downloaded standalone binaries
+bin/*
+!bin/.gitkeep

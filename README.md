@@ -80,6 +80,18 @@ Access the application at: **`http://localhost:5000`**
 
 ---
 
+## 🌐 Deploy to Render / Cloud
+
+When deploying on **Render** (as a Web Service):
+
+1. **Environment**: `Node`
+2. **Build Command**: `npm install && npm run build`
+3. **Start Command**: `npm start`
+
+> The automated `postinstall` script downloads the standalone `yt-dlp` binary and bundles platform-native `ffmpeg` directly in the Linux container, so zero manual Python or system package installation is required!
+
+---
+
 ## 📲 Add to Home Screen (PWA Guide)
 
 ### 🤖 Android (Chrome / Edge / Samsung Internet)
